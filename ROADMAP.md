@@ -6,10 +6,10 @@
 - [x] Deduplicated connections (#2)
 - [x] is_empty() method (#3)
 
-## Phase 2 — Emitting
+## Phase 2 — Emitting ✅
 
-- [ ] Invoke callbacks with a value (#4)
-- [ ] Test emit order matches insertion order (#5)
+- [x] Invoke callbacks with a value (#4)
+- [x] Test emit order matches insertion order (#5)
 
 ## Phase 3 — Lifecycle
 

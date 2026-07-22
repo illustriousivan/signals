@@ -9,8 +9,9 @@ lifetimes, interior mutability, and trait design.
 ## Features
 
 - Generic `Signal<T>` with type-safe callbacks
-- Deduplicated connections via pointer identity (`Rc` + `IndexSet`)
+- Deduplicated connections via pointer identity (`Rc`)
 - Insertion-order preservation for callback invocation
+- Panic isolation — callbacks that panic don't prevent others from executing
 - Single-thread only (uses `Rc`, not `Arc`)
 
 ## Quick Start
@@ -19,9 +20,11 @@ lifetimes, interior mutability, and trait design.
 use signals::{Signal, Callable};
 
 let mut signal = Signal::<i32>::new();
-signal.connect(Callable::new(|x: i32| {
+signal.connect(Callable::new(|&x: &i32| {
     println!("Got: {}", x);
 }));
+
+signal.emit(&42); // prints "Got: 42"
 ```
 
 ## Status
