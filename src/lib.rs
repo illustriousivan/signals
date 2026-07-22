@@ -1,16 +1,16 @@
+use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
+use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
-use indexmap::IndexSet;
-
-pub struct Callable<T>(Rc<dyn FnMut(T)>);
+pub struct Callable<T>(Rc<RefCell<dyn FnMut(&T)>>);
 
 impl<T> Callable<T> {
     pub fn new<F>(f: F) -> Self
     where
-        F: FnMut(T) + 'static,
+        F: FnMut(&T) + 'static,
     {
-        Callable(Rc::new(f))
+        Callable(Rc::new(RefCell::new(f)))
     }
 }
 
@@ -36,21 +36,21 @@ impl<T> Hash for Callable<T> {
 }
 
 pub struct Signal<T> {
-    callables: indexmap::IndexSet<Callable<T>>,
+    callables: Vec<Callable<T>>,
 }
 
 impl<T> Signal<T> {
     pub fn new() -> Self {
         Signal {
-            callables: IndexSet::new(),
+            callables: Vec::new(),
         }
     }
 
     pub fn connect(&mut self, callable: Callable<T>) -> Result<(), AlreadyConnected> {
-        if self.callables.get_index_of(&callable).is_some() {
+        if self.is_connected(&callable) {
             return Err(AlreadyConnected);
         }
-        self.callables.insert(callable);
+        self.callables.push(callable);
         Ok(())
     }
 
@@ -64,6 +64,14 @@ impl<T> Signal<T> {
 
     pub fn is_connected(&self, callable: &Callable<T>) -> bool {
         self.callables.contains(callable)
+    }
+
+    pub fn emit(&mut self, value: &T) {
+        for callable in self.callables.iter_mut() {
+            let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                (callable.0.borrow_mut())(value);
+            }));
+        }
     }
 }
 
@@ -81,11 +89,12 @@ impl std::error::Error for AlreadyConnected {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn connect_single() {
         let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         assert!(signal.connect(callable).is_ok());
@@ -96,7 +105,7 @@ mod tests {
     fn connect_multiple() {
         let mut signal = Signal::<i32>::new();
         for i in 0..3 {
-            let callable = Callable::new(move |x: i32| {
+            let callable = Callable::new(move |&x: &i32| {
                 let _ = (i, x);
             });
             assert!(signal.connect(callable).is_ok());
@@ -107,7 +116,7 @@ mod tests {
     #[test]
     fn connect_same_callable_twice() {
         let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         assert!(signal.connect(callable.clone()).is_ok());
@@ -124,7 +133,7 @@ mod tests {
     #[test]
     fn duplicate_returns_err() {
         let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         signal.connect(callable.clone()).ok();
@@ -134,7 +143,7 @@ mod tests {
     #[test]
     fn len_unchanged_after_duplicate_attempt() {
         let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         signal.connect(callable.clone()).ok();
@@ -151,7 +160,7 @@ mod tests {
     fn len_after_connects() {
         let mut signal = Signal::<i32>::new();
         for i in 0..5 {
-            let callable = Callable::new(move |x: i32| {
+            let callable = Callable::new(move |&x: &i32| {
                 let _ = (i, x);
             });
             assert!(signal.connect(callable).is_ok());
@@ -162,7 +171,7 @@ mod tests {
     #[test]
     fn not_connected_by_default() {
         let signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         assert!(!signal.is_connected(&callable));
@@ -171,7 +180,7 @@ mod tests {
     #[test]
     fn connected_returns_true() {
         let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         signal.connect(callable.clone()).ok();
@@ -181,10 +190,10 @@ mod tests {
     #[test]
     fn different_callable_returns_false() {
         let mut signal = Signal::<i32>::new();
-        let callable1 = Callable::new(|x: i32| {
+        let callable1 = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        let callable2 = Callable::new(|x: i32| {
+        let callable2 = Callable::new(|&x: &i32| {
             let _ = x + 1;
         });
         assert!(signal.connect(callable1).is_ok());
@@ -194,7 +203,7 @@ mod tests {
     #[test]
     fn clone_is_same_connection() {
         let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
+        let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
         assert!(signal.connect(callable.clone()).is_ok());
@@ -202,5 +211,129 @@ mod tests {
 
         let cloned = callable.clone();
         assert!(signal.is_connected(&cloned));
+    }
+
+    #[test]
+    fn emit_single_callback_receives_value() {
+        let mut signal = Signal::<i32>::new();
+        let received = Arc::new(Mutex::new(0));
+        let received_clone = Arc::clone(&received);
+        let callable = Callable::new(move |x: &i32| {
+            *received_clone.lock().unwrap() = *x;
+        });
+        signal.connect(callable).ok();
+
+        let value = 42;
+        signal.emit(&value);
+
+        assert_eq!(*received.lock().unwrap(), 42);
+    }
+
+    #[test]
+    fn emit_multiple_callbacks_all_receive_value() {
+        let mut signal = Signal::<i32>::new();
+        let received1 = Arc::new(Mutex::new(0));
+        let r1 = Arc::clone(&received1);
+        let received2 = Arc::new(Mutex::new(0));
+        let r2 = Arc::clone(&received2);
+        let received3 = Arc::new(Mutex::new(0));
+        let r3 = Arc::clone(&received3);
+
+        signal
+            .connect(Callable::new(move |x: &i32| {
+                *r1.lock().unwrap() = *x;
+            }))
+            .ok();
+        signal
+            .connect(Callable::new(move |x: &i32| {
+                *r2.lock().unwrap() = *x;
+            }))
+            .ok();
+        signal
+            .connect(Callable::new(move |x: &i32| {
+                *r3.lock().unwrap() = *x;
+            }))
+            .ok();
+
+        let value = 99;
+        signal.emit(&value);
+
+        assert_eq!(*received1.lock().unwrap(), 99);
+        assert_eq!(*received2.lock().unwrap(), 99);
+        assert_eq!(*received3.lock().unwrap(), 99);
+    }
+
+    #[test]
+    fn emit_empty_signal_is_safe() {
+        let mut signal = Signal::<i32>::new();
+        let value = 10;
+        signal.emit(&value); // should not panic
+    }
+
+    #[test]
+    fn emit_correct_value_passed_to_callback() {
+        let mut signal = Signal::<String>::new();
+        let received = Arc::new(Mutex::new(String::from("")));
+        let received_clone = Arc::clone(&received);
+        signal
+            .connect(Callable::new(move |x: &String| {
+                *received_clone.lock().unwrap() = x.clone();
+            }))
+            .ok();
+
+        let value = String::from("hello");
+        signal.emit(&value);
+
+        assert_eq!(*received.lock().unwrap(), "hello");
+    }
+
+    #[test]
+    fn emit_callbacks_fire_in_insertion_order() {
+        let mut signal = Signal::<i32>::new();
+        let order = Arc::new(Mutex::new(Vec::new()));
+
+        for i in 0..5 {
+            let idx = i;
+            let o = Arc::clone(&order);
+            signal
+                .connect(Callable::new(move |x: &i32| {
+                    o.lock().unwrap().push((idx, *x));
+                }))
+                .ok();
+        }
+
+        signal.emit(&100);
+
+        assert_eq!(
+            *order.lock().unwrap(),
+            vec![(0, 100), (1, 100), (2, 100), (3, 100), (4, 100)]
+        );
+    }
+
+    #[test]
+    fn emit_panic_in_callback_does_not_stop_others() {
+        let mut signal = Signal::<i32>::new();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = Arc::clone(&received);
+
+        // First callback will panic
+        signal
+            .connect(Callable::new(|x: &i32| {
+                let _ = x;
+                panic!("boom");
+            }))
+            .ok();
+
+        // Second callback should still be called
+        signal
+            .connect(Callable::new(move |x: &i32| {
+                received_clone.lock().unwrap().push(*x);
+            }))
+            .ok();
+
+        let value = 7;
+        signal.emit(&value);
+
+        assert_eq!(*received.lock().unwrap(), vec![7]);
     }
 }
