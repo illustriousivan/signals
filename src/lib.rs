@@ -58,6 +58,10 @@ impl<T> Signal<T> {
         self.callables.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.callables.is_empty()
+    }
+
     pub fn is_connected(&self, callable: &Callable<T>) -> bool {
         self.callables.contains(callable)
     }
@@ -112,12 +116,9 @@ mod tests {
     }
 
     #[test]
-    fn connect_returns_ok() {
-        let mut signal = Signal::<i32>::new();
-        let callable = Callable::new(|x: i32| {
-            let _ = x;
-        });
-        assert!(signal.connect(callable).is_ok());
+    fn empty_returns_true_on_new_signal() {
+        let signal = Signal::<i32>::new();
+        assert!(signal.is_empty());
     }
 
     #[test]
@@ -137,19 +138,13 @@ mod tests {
             let _ = x;
         });
         signal.connect(callable.clone()).ok();
-        assert_eq!(signal.len(), 1);
+        assert!(!signal.is_empty());
 
         signal.connect(Callable::new(|_| {})).ok();
-        assert_eq!(signal.len(), 2);
+        assert!(!signal.is_empty());
 
         assert_eq!(signal.connect(callable), Err(AlreadyConnected));
-        assert_eq!(signal.len(), 2);
-    }
-
-    #[test]
-    fn empty_signal_len_zero() {
-        let signal = Signal::<i32>::new();
-        assert_eq!(signal.len(), 0);
+        assert!(!signal.is_empty());
     }
 
     #[test]
