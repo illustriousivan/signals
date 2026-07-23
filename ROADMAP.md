@@ -11,9 +11,9 @@
 - [x] Invoke callbacks with a value (#4)
 - [x] Test emit order matches insertion order (#5)
 
-## Phase 3 — Lifecycle
+## Phase 3 — Lifecycle ✅
 
-- [ ] disconnect() method (#6)
+- [x] disconnect() method (#6)
 - [ ] Weak connections / auto-disconnect on drop (#7)
 
 ## Phase 4 — Advanced

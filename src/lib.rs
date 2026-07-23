@@ -3,6 +3,8 @@ use std::hash::{Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
+use indexmap::IndexSet;
+
 pub struct Callable<T>(Rc<RefCell<dyn FnMut(&T)>>);
 
 impl<T> Callable<T> {
@@ -36,13 +38,13 @@ impl<T> Hash for Callable<T> {
 }
 
 pub struct Signal<T> {
-    callables: Vec<Callable<T>>,
+    callables: IndexSet<Callable<T>>,
 }
 
 impl<T> Signal<T> {
     pub fn new() -> Self {
         Signal {
-            callables: Vec::new(),
+            callables: IndexSet::new(),
         }
     }
 
@@ -50,7 +52,7 @@ impl<T> Signal<T> {
         if self.is_connected(&callable) {
             return Err(AlreadyConnected);
         }
-        self.callables.push(callable);
+        self.callables.insert(callable);
         Ok(())
     }
 
@@ -67,11 +69,15 @@ impl<T> Signal<T> {
     }
 
     pub fn emit(&mut self, value: &T) {
-        for callable in self.callables.iter_mut() {
+        for callable in self.callables.iter() {
             let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 (callable.0.borrow_mut())(value);
             }));
         }
+    }
+
+    pub fn disconnect(&mut self, callable: &Callable<T>) -> bool {
+        self.callables.shift_remove(callable)
     }
 }
 
@@ -335,5 +341,82 @@ mod tests {
         signal.emit(&value);
 
         assert_eq!(*received.lock().unwrap(), vec![7]);
+    }
+
+    #[test]
+    fn disconnect_existing_returns_true() {
+        let mut signal = Signal::<i32>::new();
+        let callable = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+        signal.connect(callable.clone()).ok();
+
+        assert!(signal.disconnect(&callable));
+    }
+
+    #[test]
+    fn disconnect_non_connected_returns_false() {
+        let mut signal = Signal::<i32>::new();
+        let callable = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+
+        assert!(!signal.disconnect(&callable));
+    }
+
+    #[test]
+    fn disconnect_decreases_len() {
+        let mut signal = Signal::<i32>::new();
+        let callable1 = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+        let callable2 = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+
+        signal.connect(callable1.clone()).ok();
+        signal.connect(callable2).ok();
+        assert_eq!(signal.len(), 2);
+
+        signal.disconnect(&callable1);
+        assert_eq!(signal.len(), 1);
+    }
+
+    #[test]
+    fn disconnect_callable_stops_receiving_values() {
+        let mut signal = Signal::<i32>::new();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = Arc::clone(&received);
+
+        signal
+            .connect(Callable::new(move |x: &i32| {
+                received_clone.lock().unwrap().push(*x);
+            }))
+            .ok();
+
+        signal.emit(&10);
+        assert_eq!(*received.lock().unwrap(), vec![10]);
+
+        let callable = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+        signal.connect(callable.clone()).ok();
+
+        signal.disconnect(&callable);
+        signal.emit(&20);
+
+        assert_eq!(*received.lock().unwrap(), vec![10, 20]);
+    }
+
+    #[test]
+    fn disconnect_cloned_callable_removes_original() {
+        let mut signal = Signal::<i32>::new();
+        let callable = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+        signal.connect(callable.clone()).ok();
+
+        assert!(signal.disconnect(&callable));
+        assert_eq!(signal.len(), 0);
     }
 }
