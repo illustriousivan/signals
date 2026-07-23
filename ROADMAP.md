@@ -14,10 +14,10 @@
 ## Phase 3 — Lifecycle ✅
 
 - [x] disconnect() method (#6)
-- [ ] Weak connections / auto-disconnect on drop (#7)
+- [ ] Weak connections / auto-disconnect on drop (#7) *(skipped — Signal owns Callables)*
 
 ## Phase 4 — Advanced
 
-- [ ] Multi-thread support (Arc + Mutex/ArcSwap) (#8)
+- [x] Multi-thread support (Arc + Mutex/ArcSwap) (#8)
 - [ ] Signal chaining / composition (#9)
 - [ ] Performance benchmarks (#10)

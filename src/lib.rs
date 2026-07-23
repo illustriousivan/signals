@@ -1,19 +1,19 @@
-use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::panic::AssertUnwindSafe;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use indexmap::IndexSet;
 
-#[allow(clippy::type_complexity)]
-pub struct Callable<T>(Rc<RefCell<dyn FnMut(&T)>>);
+type Consumer<T> = Arc<Mutex<dyn FnMut(&T) + Send>>;
+
+pub struct Callable<T>(Consumer<T>);
 
 impl<T> Callable<T> {
     pub fn new<F>(f: F) -> Self
     where
-        F: FnMut(&T) + 'static,
+        F: FnMut(&T) + 'static + Send,
     {
-        Callable(Rc::new(RefCell::new(f)))
+        Callable(Arc::new(Mutex::new(f)))
     }
 }
 
@@ -25,7 +25,7 @@ impl<T> Clone for Callable<T> {
 
 impl<T> PartialEq for Callable<T> {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -33,7 +33,7 @@ impl<T> Eq for Callable<T> {}
 
 impl<T> Hash for Callable<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        let ptr = Rc::as_ptr(&self.0) as *const ();
+        let ptr = Arc::as_ptr(&self.0) as *const ();
         ptr.hash(state);
     }
 }
@@ -72,7 +72,7 @@ impl<T> Signal<T> {
     pub fn emit(&mut self, value: &T) {
         for callable in self.callables.iter() {
             let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                (callable.0.borrow_mut())(value);
+                (callable.0.lock().unwrap())(value);
             }));
         }
     }
@@ -425,5 +425,92 @@ mod tests {
 
         assert!(signal.disconnect(&callable));
         assert_eq!(signal.len(), 0);
+    }
+
+    #[test]
+    fn multi_thread_emit_across_threads() {
+        use std::thread;
+
+        let mut signal = Signal::<i32>::new();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let r1 = Arc::clone(&received);
+
+        signal.connect(Callable::new(move |x: &i32| {
+            r1.lock().unwrap().push(*x);
+        })).ok();
+
+        let handle = thread::spawn(move || {
+            signal.emit(&42);
+        });
+
+        handle.join().unwrap();
+
+        assert_eq!(*received.lock().unwrap(), vec![42]);
+    }
+
+    #[test]
+    fn multi_thread_concurrent_emits() {
+        use std::thread;
+
+        let signal: Arc<Mutex<Signal<i32>>> = Arc::new(Mutex::new(Signal::<i32>::new()));
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let r1 = Arc::clone(&received);
+
+        {
+            let mut s = signal.lock().unwrap();
+            s.connect(Callable::new(move |x: &i32| {
+                r1.lock().unwrap().push(*x);
+            })).ok();
+        }
+
+        let handles: Vec<_> = (0..5)
+            .map(|i| {
+                let sig = Arc::clone(&signal);
+                thread::spawn(move || {
+                    let mut s = sig.lock().unwrap();
+                    s.emit(&(i * 10));
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(*received.lock().unwrap(), vec![0, 10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn callable_is_send() {
+        fn is_send<T: Send>() {}
+        is_send::<Callable<i32>>();
+    }
+
+    #[test]
+    fn disconnect_after_thread_safe_changes() {
+        use std::thread;
+
+        let signal: Arc<Mutex<Signal<i32>>> = Arc::new(Mutex::new(Signal::<i32>::new()));
+        let callable1 = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+        let callable2 = Callable::new(|&x: &i32| {
+            let _ = x;
+        });
+
+        {
+            let mut s = signal.lock().unwrap();
+            s.connect(callable1.clone()).ok();
+            s.connect(callable2).ok();
+        }
+
+        let sig_clone = Arc::clone(&signal);
+        thread::spawn(move || {
+            let mut s = sig_clone.lock().unwrap();
+            s.emit(&42);
+        }).join().unwrap();
+
+        assert!(signal.lock().unwrap().disconnect(&callable1));
+        assert_eq!(signal.lock().unwrap().len(), 1);
     }
 }
