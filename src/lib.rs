@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use indexmap::IndexSet;
 
+#[allow(clippy::type_complexity)]
 pub struct Callable<T>(Rc<RefCell<dyn FnMut(&T)>>);
 
 impl<T> Callable<T> {
@@ -78,6 +79,12 @@ impl<T> Signal<T> {
 
     pub fn disconnect(&mut self, callable: &Callable<T>) -> bool {
         self.callables.shift_remove(callable)
+    }
+}
+
+impl<T> Default for Signal<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
