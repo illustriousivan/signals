@@ -50,11 +50,12 @@ impl<T> Signal<T> {
     }
 
     pub fn connect(&mut self, callable: Callable<T>) -> Result<(), AlreadyConnected> {
-        if self.is_connected(&callable) {
-            return Err(AlreadyConnected);
+        let (_, was_new) = self.callables.insert_full(callable);
+        if was_new {
+            Ok(())
+        } else {
+            Err(AlreadyConnected)
         }
-        self.callables.insert(callable);
-        Ok(())
     }
 
     pub fn len(&self) -> usize {
