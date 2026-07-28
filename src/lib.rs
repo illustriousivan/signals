@@ -49,13 +49,9 @@ impl<T> Signal<T> {
         }
     }
 
-    pub fn connect(&mut self, callable: Callable<T>) -> Result<(), AlreadyConnected> {
+    pub fn connect(&mut self, callable: Callable<T>) -> bool {
         let (_, was_new) = self.callables.insert_full(callable);
-        if was_new {
-            Ok(())
-        } else {
-            Err(AlreadyConnected)
-        }
+        was_new
     }
 
     pub fn len(&self) -> usize {
@@ -89,16 +85,7 @@ impl<T> Default for Signal<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct AlreadyConnected;
 
-impl std::fmt::Display for AlreadyConnected {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "callable already connected")
-    }
-}
-
-impl std::error::Error for AlreadyConnected {}
 
 #[cfg(test)]
 mod tests {
@@ -111,7 +98,7 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        assert!(signal.connect(callable).is_ok());
+        assert!(signal.connect(callable));
         assert_eq!(signal.len(), 1);
     }
 
@@ -122,7 +109,7 @@ mod tests {
             let callable = Callable::new(move |&x: &i32| {
                 let _ = (i, x);
             });
-            assert!(signal.connect(callable).is_ok());
+            assert!(signal.connect(callable));
         }
         assert_eq!(signal.len(), 3);
     }
@@ -133,8 +120,8 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        assert!(signal.connect(callable.clone()).is_ok());
-        assert_eq!(signal.connect(callable), Err(AlreadyConnected));
+        assert!(signal.connect(callable.clone()));
+        assert!(!signal.connect(callable));
         assert_eq!(signal.len(), 1);
     }
 
@@ -150,8 +137,8 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        signal.connect(callable.clone()).ok();
-        assert_eq!(signal.connect(callable), Err(AlreadyConnected));
+        assert!(signal.connect(callable.clone()));
+        assert!(!signal.connect(callable));
     }
 
     #[test]
@@ -160,13 +147,13 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        signal.connect(callable.clone()).ok();
+        signal.connect(callable.clone());
         assert!(!signal.is_empty());
 
-        signal.connect(Callable::new(|_| {})).ok();
+        signal.connect(Callable::new(|_| {}));
         assert!(!signal.is_empty());
 
-        assert_eq!(signal.connect(callable), Err(AlreadyConnected));
+        assert!(!signal.connect(callable));
         assert!(!signal.is_empty());
     }
 
@@ -177,7 +164,7 @@ mod tests {
             let callable = Callable::new(move |&x: &i32| {
                 let _ = (i, x);
             });
-            assert!(signal.connect(callable).is_ok());
+            assert!(signal.connect(callable));
             assert_eq!(signal.len(), i + 1);
         }
     }
@@ -197,7 +184,7 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        signal.connect(callable.clone()).ok();
+        signal.connect(callable.clone());
         assert!(signal.is_connected(&callable));
     }
 
@@ -210,7 +197,7 @@ mod tests {
         let callable2 = Callable::new(|&x: &i32| {
             let _ = x + 1;
         });
-        assert!(signal.connect(callable1).is_ok());
+        assert!(signal.connect(callable1));
         assert!(!signal.is_connected(&callable2));
     }
 
@@ -220,7 +207,7 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        assert!(signal.connect(callable.clone()).is_ok());
+        assert!(signal.connect(callable.clone()));
         assert!(signal.is_connected(&callable));
 
         let cloned = callable.clone();
@@ -235,7 +222,7 @@ mod tests {
         let callable = Callable::new(move |x: &i32| {
             *received_clone.lock().unwrap() = *x;
         });
-        signal.connect(callable).ok();
+        signal.connect(callable);
 
         let value = 42;
         signal.emit(&value);
@@ -253,21 +240,15 @@ mod tests {
         let received3 = Arc::new(Mutex::new(0));
         let r3 = Arc::clone(&received3);
 
-        signal
-            .connect(Callable::new(move |x: &i32| {
-                *r1.lock().unwrap() = *x;
-            }))
-            .ok();
-        signal
-            .connect(Callable::new(move |x: &i32| {
-                *r2.lock().unwrap() = *x;
-            }))
-            .ok();
-        signal
-            .connect(Callable::new(move |x: &i32| {
-                *r3.lock().unwrap() = *x;
-            }))
-            .ok();
+        signal.connect(Callable::new(move |x: &i32| {
+            *r1.lock().unwrap() = *x;
+        }));
+        signal.connect(Callable::new(move |x: &i32| {
+            *r2.lock().unwrap() = *x;
+        }));
+        signal.connect(Callable::new(move |x: &i32| {
+            *r3.lock().unwrap() = *x;
+        }));
 
         let value = 99;
         signal.emit(&value);
@@ -289,11 +270,9 @@ mod tests {
         let mut signal = Signal::<String>::new();
         let received = Arc::new(Mutex::new(String::from("")));
         let received_clone = Arc::clone(&received);
-        signal
-            .connect(Callable::new(move |x: &String| {
-                *received_clone.lock().unwrap() = x.clone();
-            }))
-            .ok();
+        signal.connect(Callable::new(move |x: &String| {
+            *received_clone.lock().unwrap() = x.clone();
+        }));
 
         let value = String::from("hello");
         signal.emit(&value);
@@ -309,11 +288,9 @@ mod tests {
         for i in 0..5 {
             let idx = i;
             let o = Arc::clone(&order);
-            signal
-                .connect(Callable::new(move |x: &i32| {
-                    o.lock().unwrap().push((idx, *x));
-                }))
-                .ok();
+            signal.connect(Callable::new(move |x: &i32| {
+                o.lock().unwrap().push((idx, *x));
+            }));
         }
 
         signal.emit(&100);
@@ -331,19 +308,15 @@ mod tests {
         let received_clone = Arc::clone(&received);
 
         // First callback will panic
-        signal
-            .connect(Callable::new(|x: &i32| {
-                let _ = x;
-                panic!("boom");
-            }))
-            .ok();
+        signal.connect(Callable::new(|x: &i32| {
+            let _ = x;
+            panic!("boom");
+        }));
 
         // Second callback should still be called
-        signal
-            .connect(Callable::new(move |x: &i32| {
-                received_clone.lock().unwrap().push(*x);
-            }))
-            .ok();
+        signal.connect(Callable::new(move |x: &i32| {
+            received_clone.lock().unwrap().push(*x);
+        }));
 
         let value = 7;
         signal.emit(&value);
@@ -357,7 +330,7 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        signal.connect(callable.clone()).ok();
+        assert!(signal.connect(callable.clone()));
 
         assert!(signal.disconnect(&callable));
     }
@@ -382,8 +355,8 @@ mod tests {
             let _ = x;
         });
 
-        signal.connect(callable1.clone()).ok();
-        signal.connect(callable2).ok();
+        assert!(signal.connect(callable1.clone()));
+        assert!(signal.connect(callable2));
         assert_eq!(signal.len(), 2);
 
         signal.disconnect(&callable1);
@@ -396,11 +369,9 @@ mod tests {
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
 
-        signal
-            .connect(Callable::new(move |x: &i32| {
-                received_clone.lock().unwrap().push(*x);
-            }))
-            .ok();
+        signal.connect(Callable::new(move |x: &i32| {
+            received_clone.lock().unwrap().push(*x);
+        }));
 
         signal.emit(&10);
         assert_eq!(*received.lock().unwrap(), vec![10]);
@@ -408,7 +379,7 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        signal.connect(callable.clone()).ok();
+        assert!(signal.connect(callable.clone()));
 
         signal.disconnect(&callable);
         signal.emit(&20);
@@ -422,7 +393,7 @@ mod tests {
         let callable = Callable::new(|&x: &i32| {
             let _ = x;
         });
-        signal.connect(callable.clone()).ok();
+        assert!(signal.connect(callable.clone()));
 
         assert!(signal.disconnect(&callable));
         assert_eq!(signal.len(), 0);
@@ -436,9 +407,9 @@ mod tests {
         let received = Arc::new(Mutex::new(Vec::new()));
         let r1 = Arc::clone(&received);
 
-        signal.connect(Callable::new(move |x: &i32| {
+        assert!(signal.connect(Callable::new(move |x: &i32| {
             r1.lock().unwrap().push(*x);
-        })).ok();
+        })));
 
         let handle = thread::spawn(move || {
             signal.emit(&42);
@@ -459,9 +430,9 @@ mod tests {
 
         {
             let mut s = signal.lock().unwrap();
-            s.connect(Callable::new(move |x: &i32| {
+            assert!(s.connect(Callable::new(move |x: &i32| {
                 r1.lock().unwrap().push(*x);
-            })).ok();
+            })));
         }
 
         let handles: Vec<_> = (0..5)
@@ -501,8 +472,8 @@ mod tests {
 
         {
             let mut s = signal.lock().unwrap();
-            s.connect(callable1.clone()).ok();
-            s.connect(callable2).ok();
+            assert!(s.connect(callable1.clone()));
+            assert!(s.connect(callable2));
         }
 
         let sig_clone = Arc::clone(&signal);
