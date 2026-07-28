@@ -20,4 +20,4 @@
 
 - [x] Multi-thread support (Arc + Mutex/ArcSwap) (#8)
 - [ ] Signal chaining / composition (#9)
-- [ ] Performance benchmarks (#10)
+- [x] Performance benchmarks (#10)
